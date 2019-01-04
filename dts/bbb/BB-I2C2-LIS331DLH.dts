@@ -1,0 +1,42 @@
+/*
+ * Copyright (C) 2018 Seeed Studio
+ * Peter Yang <turmary@126.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path="/";
+		__overlay__ {
+
+			aliases {
+				lis331dlh = "/ocp/i2c@4819c000/lis331dlh@18";
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&i2c2>;
+		__overlay__ {
+			status = "okay";
+
+			/* this is the configuration part */
+			clock-frequency = <400000>;
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			lis331dlh@18 {
+				compatible = "st,lis331dlh";
+				reg = <0x18>;
+				status = "okay";
+			};
+		};
+	};
+};
+
