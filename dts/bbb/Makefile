@@ -4,21 +4,41 @@
 # GPL License
 #
 
-DTBOS = BB-I2C2-LIS331DLH.dtbo
+DTBOS := $(patsubst %.dts, %.dtbo, $(wildcard *.dts))
+# $(warning DTBOS = $(DTBOS))
 
 DEST  := /lib/firmware
 SHELL := /bin/bash
+CPP   := gcc -E
+DTC   := dtc
 
+
+DTC_FLAGS += -Wno-unit_address_vs_reg
+dtc-tmp = $(<).tmp
+
+dtc_cpp_flags  = -nostdinc		\
+                 -Iinclude		\
+                 -undef -D__DTS__
+
+define cmd_dtc
+	$(CPP) $(dtc_cpp_flags) -x assembler-with-cpp -o $(dtc-tmp) $< ;
+        $(DTC) -I dts -O dtb -o $@ -b 0 -@	\
+                $(DTC_FLAGS) 			\
+                $(dtc-tmp) ;
+endef
 
 %.dtbo : %.dts
-	dtc -@ -I dts -O dtb $< -o $@
+	$(call cmd_dtc)
 
 
+PHONY += all
 all: ${DTBOS}
 
+PHONY += clean
 clean:
-	rm -f ${DTBOS}
+	rm -f ${DTBOS} *.tmp
 
+PHONY += install
 install:
 	@for i in ${DTBOS}; do			\
 		cp $$i ${DEST}/;		\
@@ -26,10 +46,15 @@ install:
 	done
 	# echo 'uboot_overlay_addr7=/lib/firmware/BB-I2C2-LIS331DLH.dtbo' >> /boot/uEnv.txt
 
+PHONY += uninstall
 uninstall:
 	@for i in ${DTBOS}; do			\
 		rm ${DEST}/$$i;			\
 		echo uninstall ${DEST}/$$i;	\
 	done
 
-.PHONY: all clean install uninstall
+PHONY += FORCE
+FORCE:
+
+.PHONY: $(PHONY)
+

@@ -50,3 +50,7 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+dts/bbb/*.dts.tmp
+dts/bbb/*.dtbo
+
