@@ -84,6 +84,10 @@
 					default-state = "off";
 				};
 
+				/*
+				 * Only SLOT 1057 enabled, uncomment below statements
+				 * if you need other slots be used.
+				 */
 				#if 0
 				grove_led_1059@5 {
 					label = "grove:usr1";
