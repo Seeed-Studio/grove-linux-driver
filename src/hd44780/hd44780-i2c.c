@@ -1,3 +1,27 @@
+/*
+ * hd44780-i2c.c
+ *
+ * Implements I2C interface for JHD1802/HD44780 LCD.
+ * Driver is based on driver written by gorskima
+ * (https://github.com/gorskima/hd44780-i2c).
+ *
+ * Port to support JHD1802 by Peter Yang <turmary@126.com>
+ * Copyright (C) 2019 Seeed Studio
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ */
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/printk.h>
@@ -212,7 +236,8 @@ static int hd44780_probe(struct i2c_client *client, const struct i2c_device_id *
 		return -ENOMEM;
 	}
 
-	hd44780_init(lcd, hd44780_geometries[0], client);
+	/* JHD1802, default resolution 16x2 */
+	hd44780_init(lcd, hd44780_geometries[1], client);
 
 	spin_lock(&hd44780_list_lock);
 	list_add(&lcd->list, &hd44780_list);
@@ -239,8 +264,7 @@ static int hd44780_probe(struct i2c_client *client, const struct i2c_device_id *
 
 	hd44780_init_lcd(lcd);
 
-	hd44780_print(lcd, "/dev/");
-	hd44780_print(lcd, device->kobj.name);
+	hd44780_print(lcd, "Grove-16x2 LCD\nJHD1802M0");
 	lcd->dirty = true;
 	
 	return 0;
@@ -294,6 +318,7 @@ static const struct i2c_device_id hd44780_id[] = {
 	{ NAME, 0},
 	{ }
 };
+MODULE_DEVICE_TABLE(i2c, hd44780_id);
 
 static struct i2c_driver hd44780_driver = {
 	.driver = {
@@ -348,5 +373,6 @@ static void __exit hd44780_mod_exit(void)
 module_exit(hd44780_mod_exit);
 
 MODULE_AUTHOR("Mariusz Gorski <marius.gorski@gmail.com>");
-MODULE_DESCRIPTION("HD44780 I2C via PCF8574 driver");
+MODULE_AUTHOR("Peter Yang <turmary@126.com>");
+MODULE_DESCRIPTION("JHD1802 HD44780 I2C driver");
 MODULE_LICENSE("GPL");

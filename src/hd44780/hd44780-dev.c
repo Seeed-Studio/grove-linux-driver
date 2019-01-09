@@ -9,6 +9,8 @@
 #define E	0x04
 #define RW	0x02
 #define RS	0x01
+#define _DATA	0x40
+#define _CMD	0x80
 
 #define HD44780_CLEAR_DISPLAY	0x01
 #define HD44780_RETURN_HOME	0x02
@@ -23,6 +25,8 @@
 #define HD44780_DL_4BITS	0x00
 #define HD44780_N_2LINES	0x08
 #define HD44780_N_1LINE		0x00
+#define HD44780_5x10DOTS	0x04
+#define HD44780_5x8DOTS		0x00
 
 #define HD44780_D_DISPLAY_ON	0x04
 #define HD44780_D_DISPLAY_OFF	0x00
@@ -64,73 +68,32 @@ struct hd44780_geometry *hd44780_geometries[] = {
 /* Defines possible register that we can write to */
 typedef enum { IR, DR } dest_reg;
 
-static void pcf8574_raw_write(struct hd44780 *lcd, u8 data)
-{
-	i2c_smbus_write_byte(lcd->i2c_client, data);
-}
-
 static void hd44780_write_nibble(struct hd44780 *lcd, dest_reg reg, u8 data)
 {
-	/* Shift the interesting data on the upper 4 bits (b7-b4) */
-	data = (data << 4) & 0xF0;
+	u8 first;
 
-	/* Flip the RS bit if we write do data register */
-	if (reg == DR)
-		data |= RS;
-	
-	/* Keep the RW bit low, because we write */
-	data = data | (RW & 0x00);
+	/*
+	 * First byte, select DATA or CMD
+	 * Second byte, DATA or CMD
+	 */
+	first = (reg == DR)? _DATA: _CMD;
+	i2c_smbus_write_byte_data(lcd->i2c_client, first, data);
 
-	/* Flip the backlight bit */
-	if (lcd->backlight)
-		data |= BL;
-
-	pcf8574_raw_write(lcd, data);
-	/* Theoretically wait for tAS = 40ns, practically it's already elapsed */
-
-	/* Raise the E signal... */
-	pcf8574_raw_write(lcd, data | E);
-	/* Again, "wait" for pwEH = 230ns */
-
-	/* ...and let it fall to clock the data into the HD44780's register */
-	pcf8574_raw_write(lcd, data);
-	/* And again, "wait" for about tCYC_E - pwEH = 270ns */
+	return;
 }
 
 /*
- * Takes a regular 8-bit instruction and writes it's high nibble into device's
- * instruction register. The low nibble is assumed to be all zeros. This is
- * used with a physical 4-bit bus when the device is still expecting 8-bit
- * instructions.
+ * JHD1802 lowlevel functions
  */
-static void hd44780_write_instruction_high_nibble(struct hd44780 *lcd, u8 data)
-{
-	u8 h = (data >> 4) & 0x0F;
-
-	hd44780_write_nibble(lcd, IR, h);
-	
-	udelay(37);
-}
-
 static void hd44780_write_instruction(struct hd44780 *lcd, u8 data)
 {
-	u8 h = (data >> 4) & 0x0F;
-	u8 l = data & 0x0F;
-
-	hd44780_write_nibble(lcd, IR, h);
-	hd44780_write_nibble(lcd, IR, l);
-
+	hd44780_write_nibble(lcd, IR, data);
 	udelay(37);
 }
 
 static void hd44780_write_data(struct hd44780 *lcd, u8 data)
 {
-	u8 h = (data >> 4) & 0x0F;
-	u8 l = data & 0x0F;
-
-	hd44780_write_nibble(lcd, DR, h);
-	hd44780_write_nibble(lcd, DR, l);
-
+	hd44780_write_nibble(lcd, DR, data);
 	udelay(37 + 4);
 }
 
@@ -302,7 +265,7 @@ void hd44780_set_geometry(struct hd44780 *lcd, struct hd44780_geometry *geo)
 {
 	lcd->geometry = geo;
 
-	if (lcd->is_in_esc_seq);
+	if (lcd->is_in_esc_seq)
 		hd44780_leave_esc_seq(lcd);
 
 	hd44780_clear_display(lcd);
@@ -311,7 +274,8 @@ void hd44780_set_geometry(struct hd44780 *lcd, struct hd44780_geometry *geo)
 void hd44780_set_backlight(struct hd44780 *lcd, bool backlight)
 {
 	lcd->backlight = backlight;
-	pcf8574_raw_write(lcd, backlight ? BL : 0x00);
+	/* TODO */
+	hd44780_write_instruction(lcd, backlight ? BL : 0x00);
 }
 
 static void hd44780_update_display_ctrl(struct hd44780 *lcd)
@@ -336,27 +300,29 @@ void hd44780_set_cursor_display(struct hd44780 *lcd, bool cursor_display)
 	lcd->cursor_display= cursor_display;
 	hd44780_update_display_ctrl(lcd);
 }
+
 void hd44780_init_lcd(struct hd44780 *lcd)
 {
-	hd44780_write_instruction_high_nibble(lcd, HD44780_FUNCTION_SET
+	/* HD44780 requires writing three times to initialize or reset
+	 *   according to the hardware errata on page 45 figure 23 of
+	 *   the Hitachi HD44780 datasheet */
+	hd44780_write_instruction(lcd, HD44780_FUNCTION_SET
 		| HD44780_DL_8BITS);
 	mdelay(5);
 
-	hd44780_write_instruction_high_nibble(lcd, HD44780_FUNCTION_SET
+	hd44780_write_instruction(lcd, HD44780_FUNCTION_SET
 		| HD44780_DL_8BITS);
 	udelay(100);
 
-	hd44780_write_instruction_high_nibble(lcd, HD44780_FUNCTION_SET
+	hd44780_write_instruction(lcd, HD44780_FUNCTION_SET
 		| HD44780_DL_8BITS);
 	
-	hd44780_write_instruction_high_nibble(lcd, HD44780_FUNCTION_SET
-		| HD44780_DL_4BITS);
-
-	hd44780_write_instruction(lcd, HD44780_FUNCTION_SET | HD44780_DL_4BITS
-		| HD44780_N_2LINES);
+	hd44780_write_instruction(lcd, HD44780_FUNCTION_SET | HD44780_DL_8BITS
+		| HD44780_N_2LINES | HD44780_5x10DOTS);
 
 	hd44780_write_instruction(lcd, HD44780_DISPLAY_CTRL | HD44780_D_DISPLAY_ON
 		| HD44780_C_CURSOR_ON | HD44780_B_BLINK_ON);
+	udelay(100);
 
 	hd44780_clear_display(lcd);
 

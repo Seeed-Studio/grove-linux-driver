@@ -1,0 +1,9 @@
+# /etc/udev/rules.d/86-lcd-noroot.rules
+#
+# Corrects sys LCD permissions on the BB so non-root users in the gpio group can manipulate bits
+#
+SUBSYSTEM=="hd44780", OWNER="root", GROUP="i2c", MODE="0660"
+# Change group to i2c
+SUBSYSTEM=="hd44780", DEVPATH=="/devices/virtual/hd44780/lcd*", RUN+="/bin/sh -c '/bin/chown -R root:i2c /sys$devpath'"
+# Change user permissions to ensure user and group have read/write permissions
+SUBSYSTEM=="hd44780", DEVPATH=="/devices/virtual/hd44780/lcd*", RUN+="/bin/sh -c '/bin/chmod -R ug+rw /sys$devpath'"

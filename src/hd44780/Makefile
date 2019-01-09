@@ -1,15 +1,31 @@
-ifneq ($(KERNELRELEASE),)
-	obj-m := hd44780.o
-	hd44780-y := hd44780-i2c.o hd44780-dev.o
+#
+# Peter Yang <turmary@126.com>
+# Copyright (c) 2019 Seeed Studio
+#
+# GPL License
+#
+uname_r := $(shell uname -r)
 
-else
-	KERNELDIR ?= /lib/modules/$(shell uname -r)/build
-	PWD := $(shell pwd)
+hd44780-objs := hd44780-i2c.o hd44780-dev.o
 
-default:
-	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
+obj-m += hd44780.o
+
+BUILD := /lib/modules/$(uname_r)/build
+DEST  := /lib/modules/$(uname_r)/kernel
+
+all:
+	make -C ${BUILD} M=$(PWD) modules
 
 clean:
-	$(MAKE) -C $(KERNELDIR) M=$(PWD) clean
-endif
+	make -C ${BUILD} M=$(PWD) clean
+
+install:
+	cp hd44780.ko ${DEST}/drivers/misc/
+	depmod -a
+
+uninstall:
+	rm -f ${DEST}/drivers/misc/hd44780.ko
+	depmod -a
+
+.PHONY: all clean install uninstall
 
