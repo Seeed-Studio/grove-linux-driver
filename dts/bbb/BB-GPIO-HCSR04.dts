@@ -33,33 +33,51 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			hcsr04@20 {
+			/* SLOT 1057 */
+			hcsr04_1057@20 {
 				compatible = "hcsr04";
 				pinctrl-names = "default";
 				pinctrl-0 = <>;
 				status = "okay";
 
-				/*
-				 * Only single SLOT supported,
-				 * uncomment the one you need, comment others
-				 */
-				/* SLOT 1057 */
 				gpios = <
 					&gpio1 25 0	/* trigger pin */
 					&gpio1 25 0	/* echo    pin */
 				>;
-
-				#if 0
-				/* SLOT 1059 */
-				gpios = <&gpio1 27 0>;
-
-				/* SLOT PWM */
-				gpios = <&gpio3 14 0>;
-
-				/* SLOT UART4 */
-				gpios = <&gpio0 30 0>;
-				#endif
 			};
+
+			/*
+			 * Only SLOT 1057 enabled, uncomment below statements
+			 * if you need other slots be used.
+			 */
+			#if 0
+			/* SLOT 1059 */
+			hcsr04_1059@21 {
+				compatible = "hcsr04";
+				pinctrl-names = "default";
+				pinctrl-0 = <>;
+				status = "okay";
+				gpios = <&gpio1 27 0>;
+			};
+
+			/* SLOT PWM */
+			hcsr04_pwm@22 {
+				compatible = "hcsr04";
+				pinctrl-names = "default";
+				pinctrl-0 = <>;
+				status = "okay";
+				gpios = <&gpio3 14 0>;
+			};
+
+			/* SLOT UART4 */
+			hcsr04_uart4@23 {
+				compatible = "hcsr04";
+				pinctrl-names = "default";
+				pinctrl-0 = <>;
+				status = "okay";
+				gpios = <&gpio0 30 0>;
+			};
+			#endif
 		};
 	};
 };

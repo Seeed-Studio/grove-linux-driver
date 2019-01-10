@@ -40,7 +40,7 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			bme280@3e {
+			bme280@76 {
 				compatible = "bme280";
 				reg = <0x76>;
 				status = "okay";

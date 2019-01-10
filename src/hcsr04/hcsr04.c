@@ -1,9 +1,10 @@
 /*
- * Experimental Kernel module for HC-SR04 Ultrasonic Range Finder
+ * Kernel module for HC-SR04 Ultrasonic Range Finder
  *
+ * Original written by
  * Copyright (C) 2014 James Ward
  *
- * Port to support single signal pin, and device tree configuration
+ * Port to support single signal pin device, iio, and device tree configuration
  *
  * Copyright (C) 2019 Seeed Studio
  * Peter Yang <turmary@126.com>
@@ -11,7 +12,6 @@
  * Released under the GPL
  *
  */
-
 #include <linux/kobject.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
@@ -27,22 +27,34 @@
 #include <linux/platform_device.h>
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
+#include <linux/iio/iio.h>
 
 #define DEV_NAME	"hcsr04"
 #define DEV_ALERT	KERN_ALERT DEV_NAME ": "
 
+struct hcsr04 {
+	struct device *   dev;
+	int               trig;                /* trigger pin */
+	int               echo;                /* echo pin */
+	int               count;               /* Number of interrupts received */
+	ktime_t           time_stamp[2];       /* Time-stamp of interrupts */
+	/* Declare a wait queue to wait for interrupts */
+	wait_queue_head_t wait;
+	/* Mutex used to prevent simultaneous access */
+	struct mutex      lock;
+	long              distance;
+};
+
+
 /*---------------------------------------------------------------------------*/
 
-/* The Kernel object */
-static struct kobject *s_dev_obj = NULL;
-
 /* GPIO pin used for trigger out */
-static int trig = 57;
-module_param(trig, int, S_IRUGO);
+static int trig_pin = 57;
+module_param(trig_pin, int, S_IRUGO);
 
 /* GPIO pin used for echo in */
-static int echo = 57;
-module_param(echo, int, S_IRUGO);
+static int echo_pin = 57;
+module_param(echo_pin, int, S_IRUGO);
 
 /* High level pulse width, in us */
 static int pulse = 20;
@@ -53,41 +65,25 @@ const long TIMEOUT_RANGE_FINDING = 60;
 
 /*---------------------------------------------------------------------------*/
 
-typedef struct {
-	int count;                   /* Number of interrupts received */
-	ktime_t time_stamp[2];       /* Time-stamp of interrupts */
-} irq_data_t;
-
-static irq_data_t irq_data;
-
-/* Declare a wait queue to wait for interrupts */
-static DECLARE_WAIT_QUEUE_HEAD(wait);
-
-/* Mutex used to prevent simultaneous access */
-static DEFINE_MUTEX(mutex);
-
-/*---------------------------------------------------------------------------*/
-
 /* Interrupt handler: called on rising/falling edge */
-static irqreturn_t gpioInterruptHandler( int irq, void *dev_id )
+static irqreturn_t gpio_interrupt_handler( int irq, void *dev_id )
 {
+	struct hcsr04* hc = (struct hcsr04*)dev_id;
+
 	/* Get the kernel time */
 	ktime_t time_stamp = ktime_get();
 
-	/* Check the cookie */
-	if ( dev_id != &irq_data )
-		return IRQ_HANDLED;
 
 	/* For the first two interrupts received, store the time-stamp */
-	if ( irq_data.count < 2 )
-		irq_data.time_stamp[irq_data.count] = time_stamp;
+	if ( hc->count < 2 )
+		hc->time_stamp[hc->count] = time_stamp;
 
 	/* Count the number of interrupts received */
-	++irq_data.count;
+	++hc->count;
 
 	/* If we have received two interrupts, wake up */
-	if ( irq_data.count > 1 )
-		wake_up_interruptible( &wait );
+	if ( hc->count > 1 )
+		wake_up_interruptible( &hc->wait );
 
 	return IRQ_HANDLED;
 }
@@ -97,7 +93,8 @@ static irqreturn_t gpioInterruptHandler( int irq, void *dev_id )
 /* Measures the range, returning the time period in microseconds, and the
  * range in millimetres. The return value is 1 for success, and 0 for failure.
  */
-int hcsr04_measure_range(
+static int hcsr04_measure_range(
+	struct hcsr04* hc,
 	long *us,	/* out: time in us */
 	long *mm	/* out: range in mm */
 ) {
@@ -110,33 +107,33 @@ int hcsr04_measure_range(
 	int range_complete = 0;      /* indicates successful range finding */
 
 	/* Acquire the mutex before entering critical section */
-	mutex_lock( &mutex );
+	mutex_lock( &hc->lock );
 
 	/* Initialise variables used by interrupt handler */
-	irq_data.count = 0;
-	memset( &irq_data.time_stamp, 0, sizeof(irq_data.time_stamp) );
+	hc->count = 0;
+	memset( &hc->time_stamp, 0, sizeof(hc->time_stamp) );
 
-	if (echo == trig) {
+	if (hc->echo == hc->trig) {
 		/* make GPIO an output */
-		if ( gpio_direction_output(trig, 0) != 0 ) {
-			printk( DEV_ALERT "Failed to make sig/trig pin %d an output\n", trig );
-			mutex_unlock( &mutex );
+		if ( gpio_direction_output(hc->trig, 0) != 0 ) {
+			printk( DEV_ALERT "Failed to make sig/trig pin %d an output\n", hc->trig );
+			mutex_unlock( &hc->lock );
 			return -1;
 		}
 	}
 
 	/* Transmit trigger pulse, lasting at least 20us */
-	gpio_set_value(trig, 0);
+	gpio_set_value(hc->trig, 0);
 	udelay(2);
-	gpio_set_value(trig, 1);
+	gpio_set_value(hc->trig, 1);
 	udelay(pulse);
-	gpio_set_value(trig, 0);
+	gpio_set_value(hc->trig, 0);
 
-	if (echo == trig) {
+	if (hc->echo == hc->trig) {
 		/* make GPIO an input */
-		if ( gpio_direction_input(echo) ) {
-			printk( DEV_ALERT "Failed to make sig/echo pin %d an input\n", echo );
-			mutex_unlock( &mutex );
+		if ( gpio_direction_input(hc->echo) ) {
+			printk( DEV_ALERT "Failed to make sig/echo pin %d an input\n", hc->echo );
+			mutex_unlock( &hc->lock );
 			return -1;
 		}
 	}
@@ -144,16 +141,16 @@ int hcsr04_measure_range(
 	/* Request an IRQ for the echo GPIO pin, so that we can measure the rising
 	 * and falling edge of the pulse from the ranger.
 	 */
-	irq = gpio_to_irq( echo );
+	irq = gpio_to_irq( hc->echo );
 	if ( request_irq(
 		irq,
-		gpioInterruptHandler,
+		gpio_interrupt_handler,
 		IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_SHARED,
 		"hcsr04_irq",
-		&irq_data
+		hc
 	) ) {
 		/* Release the mutex */
-		mutex_unlock( &mutex );
+		mutex_unlock( &hc->lock );
 		return -1;
 	}
 
@@ -161,25 +158,25 @@ int hcsr04_measure_range(
 	 * range finding has completed), or we have timed out
 	 */
 	wait_event_interruptible_timeout(
-		wait,
-		irq_data.count == 2,
+		hc->wait,
+		hc->count == 2,
 		msecs_to_jiffies(TIMEOUT_RANGE_FINDING)
 	);
 
 	/* Free the interrupt */
-	free_irq( irq, &irq_data );
+	free_irq( irq, hc );
 
 	/* Have we successfully completed ranging? */
-	range_complete = (irq_data.count == 2);
+	range_complete = (hc->count == 2);
 
 	if ( range_complete ) {
 		/* Calculate pulse length */
-		elapsed_kt = ktime_sub( irq_data.time_stamp[1], irq_data.time_stamp[0] );
+		elapsed_kt = ktime_sub( hc->time_stamp[1], hc->time_stamp[0] );
 		elapsed_tv = ktime_to_timeval( elapsed_kt );
 	}
 
 	/* Release the mutex */
-	mutex_unlock( &mutex );
+	mutex_unlock( &hc->lock );
 
 	if ( range_complete ) {
 		/* Return the time period in microseconds. We ignore the tv_sec,
@@ -206,90 +203,79 @@ int hcsr04_measure_range(
 
 /*---------------------------------------------------------------------------*/
 
-/* This function is called when the 'range' kernel object is read */
-static ssize_t range_show(
-	struct kobject *object,
-	struct kobj_attribute *attribute,
-	char *buffer
-) {
+static int hcsr04_read_raw(struct iio_dev *iio,
+        const struct iio_chan_spec *chan,
+        int *val, int *val2, long m)
+{
+	struct hcsr04 *hcsr04 = iio_priv(iio);
 	long us = 0;
-	long mm = 0;
+	int ret;
 
-	/* Outputs: <mm> <us> <good> where:
-	 * <mm> = Distance in millimetres
-	 * <us> = Time in microseconds
-	 * <good> = 1 for success, 0 for failure
-	 */
-	if ( hcsr04_measure_range( &us, &mm ) != 0 )
-		return sprintf( buffer, "%ld %ld 1\n", mm, us );
+	hcsr04_measure_range(hcsr04, &us, &hcsr04->distance);
+
+	ret = IIO_VAL_INT;
+	if (chan->type == IIO_DISTANCE)
+		*val = hcsr04->distance;
 	else
-		return sprintf( buffer, "0 0 0\n" );
+		ret = -EINVAL;
+
+	return ret;
 }
 
-/*---------------------------------------------------------------------------*/
-
-/* Attribute representing the 'range' kernel object, which is read only */
-static struct kobj_attribute range_attr = __ATTR_RO(range);
-
-/*---------------------------------------------------------------------------*/
-
-/* List of all attributes */
-static struct attribute *attrs[] = {
-	&range_attr.attr,
-	NULL    /* terminate the list */
+static const struct iio_info hcsr04_iio_info = {
+	.driver_module		= THIS_MODULE,
+	.read_raw		= hcsr04_read_raw,
 };
 
-/*---------------------------------------------------------------------------*/
-
-/* Attribute group */
-static struct attribute_group attr_group = {
-	.attrs = attrs
+static const struct iio_chan_spec hcsr04_chan_spec[] = {
+	{ .type = IIO_DISTANCE,
+		.info_mask_separate = BIT(IIO_CHAN_INFO_PROCESSED), },
 };
 
 /*---------------------------------------------------------------------------*/
 
 /* Initialise GPIO */
-static int hcsr04_gpio_init( void )
+static int hcsr04_gpio_init( struct hcsr04* hc )
 {
 	/* check that trigger GPIO is valid */
-	if ( !gpio_is_valid(trig) ){
-		printk( DEV_ALERT "trig GPIO %d is not valid\n", trig );
+	if ( !gpio_is_valid(hc->trig) ){
+		printk( DEV_ALERT "trig GPIO %d is not valid\n", hc->trig );
 		return -EINVAL;
 	}
 
 	/* request the GPIO pin */
-	if ( gpio_request(trig, DEV_NAME) != 0 ) {
-		printk( DEV_ALERT "Unable to request trig GPIO %d\n", trig );
+	if ( gpio_request(hc->trig, DEV_NAME) != 0 ) {
+		printk( DEV_ALERT "Unable to request trig GPIO %d\n", hc->trig );
 		return -EINVAL;
 	}
 
 	/* make GPIO an output */
-	if ( gpio_direction_output(trig, 0) != 0 ) {
-		printk( DEV_ALERT "Failed to make trig GPIO %d an output\n", trig );
+	if ( gpio_direction_output(hc->trig, 0) != 0 ) {
+		printk( DEV_ALERT "Failed to make trig GPIO %d an output\n", hc->trig );
 		return -EINVAL;
 	}
 
 	/* check if trigger and echo are the same GPIO */
-	if ( trig == echo ) {
-		printk( DEV_ALERT "sig/echo GPIO %d is same as sig/trig\n", echo);
+	if ( hc->trig == hc->echo ) {
+		printk( DEV_ALERT "sig/echo GPIO %d is same as sig/trig\n", hc->echo);
 		return 0;
 	}
 
 	/* check that echo GPIO is valid */
-	if ( !gpio_is_valid(echo) ){
-		printk( DEV_ALERT "echo GPIO %d is not valid\n", echo );
+	if ( !gpio_is_valid(hc->echo) ){
+		printk( DEV_ALERT "echo GPIO %d is not valid\n", hc->echo );
 		return -EINVAL;
 	}
 
 	/* request the GPIO pin */
-	if ( gpio_request(echo, DEV_NAME) != 0 ) {
-		printk( DEV_ALERT "Unable to request echo GPIO %d\n", echo );
+	if ( gpio_request(hc->echo, DEV_NAME) != 0 ) {
+		printk( DEV_ALERT "Unable to request echo GPIO %d\n", hc->echo );
 		return -EINVAL;
 	}
 
 	/* make GPIO an input */
-	if ( gpio_direction_input(echo) != 0 ) {
-		printk( DEV_ALERT "Failed to make echo GPIO %d an input\n", echo );
+	if ( gpio_direction_input(hc->echo) != 0 ) {
+		printk( DEV_ALERT "Failed to make echo GPIO %d an input\n", hc->echo );
 		return -EINVAL;
 	}
 
@@ -299,10 +285,13 @@ static int hcsr04_gpio_init( void )
 /*---------------------------------------------------------------------------*/
 
 /* Free GPIO */
-static void hcsr04_gpio_free( void )
+static void hcsr04_gpio_free( struct hcsr04* hc )
 {
-	gpio_free(trig);
-	gpio_free(echo);
+	gpio_free(hc->trig);
+	if (hc->echo != hc->trig) {
+		gpio_free(hc->echo);
+	}
+	return;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -317,8 +306,13 @@ MODULE_DEVICE_TABLE(of, hcsr04_dt_ids);
 /* device initialisation function */
 static int hcsr04_probe(struct platform_device* pdev)
 {
-	int ret = -1;
 	struct device *dev = &pdev->dev;
+	struct hcsr04 *hcsr04;
+	struct iio_dev *iio;
+	int ret = -1;
+	int trig = 0;
+	int echo = 0;
+
 	#ifdef CONFIG_OF
 	struct device_node *node = dev->of_node;
 
@@ -338,38 +332,54 @@ static int hcsr04_probe(struct platform_device* pdev)
 			}
 		}
 	}
+	#else
+	trig = trig_pin;
+	echo = echo_pin;
 	#endif
 
-	/* Create /sys/kernel/hcsr04 representing the HCSR04 sensor */
-	s_dev_obj = kobject_create_and_add( DEV_NAME, kernel_kobj );
-	if ( s_dev_obj == NULL )
+	iio = devm_iio_device_alloc(dev, sizeof(*hcsr04));
+	if (!iio) {
+		dev_err(dev, "Failed to allocate IIO device\n");
 		return -ENOMEM;
-
-	/* Create the files associated with this kobject */
-	ret = sysfs_create_group( s_dev_obj, &attr_group );
-	if ( ret ) {
-		/* Failed: clean up */
-		kobject_put( s_dev_obj );
-		return ret;
 	}
 
+	/* fill hcsr04 structure */
+	hcsr04 = iio_priv(iio);
+	hcsr04->dev = dev;
+	hcsr04->trig = trig;
+	hcsr04->echo = echo;
+	init_waitqueue_head(&hcsr04->wait);
+	mutex_init(&hcsr04->lock);
+
+	platform_set_drvdata(pdev, iio);
+
+	iio->name = pdev->name;
+	iio->dev.parent = &pdev->dev;
+	iio->info = &hcsr04_iio_info;
+	iio->modes = INDIO_DIRECT_MODE;
+	iio->channels = hcsr04_chan_spec;
+	iio->num_channels = ARRAY_SIZE(hcsr04_chan_spec);
+
 	/* Set up the GPIO */
-	if ( hcsr04_gpio_init() < 0 )
+	if ( hcsr04_gpio_init(hcsr04) < 0 )
 		return -EINVAL;
 
-	return ret;
+
+	return devm_iio_device_register(dev, iio);
 }
 
 /*---------------------------------------------------------------------------*/
 
-/* Module exit function */
+/* device removing function */
 static int hcsr04_remove(struct platform_device* pdev)
 {
-	/* Decrement refcount and clean up if zero */
-	kobject_put( s_dev_obj );
+	struct iio_dev *iio = platform_get_drvdata(pdev);
+	struct hcsr04 *hcsr04 = iio_priv(iio);
 
 	/* Free GPIO */
-	hcsr04_gpio_free();
+	hcsr04_gpio_free(hcsr04);
+
+	iio_device_unregister(iio);
 	return 0;
 }
 
