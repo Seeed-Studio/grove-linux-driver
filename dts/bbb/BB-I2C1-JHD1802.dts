@@ -2,9 +2,8 @@
  * Copyright (C) 2019 Seeed Studio
  * Peter Yang <turmary@126.com>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * MIT License
+ *
  */
 /dts-v1/;
 /plugin/;

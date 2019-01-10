@@ -1,7 +1,7 @@
 # Peter Yang
 # Copyright (c) 2019 Seeed Studio
 #
-# GPL License
+# MIT License
 #
 
 DTBOS := $(patsubst %.dts, %.dtbo, $(wildcard *.dts))

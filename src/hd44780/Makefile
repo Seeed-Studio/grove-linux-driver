@@ -2,7 +2,7 @@
 # Peter Yang <turmary@126.com>
 # Copyright (c) 2019 Seeed Studio
 #
-# GPL License
+# MIT License
 #
 uname_r := $(shell uname -r)
 
