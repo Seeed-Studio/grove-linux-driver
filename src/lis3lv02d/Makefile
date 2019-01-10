@@ -4,28 +4,37 @@
 #
 # MIT License
 #
-uname_r := $(shell uname -r)
 
+_tgt     := lis331dlh-i2c
+
+_uname_r := $(shell uname -r)
+_BUILD   := /lib/modules/$(_uname_r)/build
+_PWD     := $(shell pwd)
+
+# If KERNELRELEASE is defined, we've been invoked from the
+# kernel build system and can use its language
+ifneq ($(KERNELRELEASE),)
 lis331dlh-i2c-objs := lis3lv02d.o lis3lv02d_i2c.o
+obj-m += ${_tgt}.o
 
-obj-m += lis331dlh-i2c.o
+else
+_class  := drivers/misc
 
-BUILD := /lib/modules/$(uname_r)/build
-DEST  := /lib/modules/$(uname_r)/kernel
+DEST  := /lib/modules/$(_uname_r)/kernel
 
 all:
-	make -C ${BUILD} M=$(PWD) modules
+	make -C ${_BUILD} M=$(_PWD) modules
 
 clean:
-	make -C ${BUILD} M=$(PWD) clean
+	make -C ${_BUILD} M=$(_PWD) clean
 
 install:
-	cp lis331dlh-i2c.ko ${DEST}/drivers/misc/
+	cp ${_tgt}.ko ${DEST}/${_class}/
 	depmod -a
 
 uninstall:
-	rm -f ${DEST}/drivers/misc/lis331dlh-i2c.ko
+	rm -f ${DEST}/${_class}/${_tgt}.ko
 	depmod -a
 
 .PHONY: all clean install uninstall
-
+endif

@@ -4,28 +4,37 @@
 #
 # MIT License
 #
-uname_r := $(shell uname -r)
 
+_tgt     := hd44780
+
+_uname_r := $(shell uname -r)
+_BUILD   := /lib/modules/$(_uname_r)/build
+_PWD     := $(shell pwd)
+
+# If KERNELRELEASE is defined, we've been invoked from the
+# kernel build system and can use its language
+ifneq ($(KERNELRELEASE),)
 hd44780-objs := hd44780-i2c.o hd44780-dev.o
+obj-m += ${_tgt}.o
 
-obj-m += hd44780.o
+else
+_class  := drivers/misc
 
-BUILD := /lib/modules/$(uname_r)/build
-DEST  := /lib/modules/$(uname_r)/kernel
+DEST  := /lib/modules/$(_uname_r)/kernel
 
 all:
-	make -C ${BUILD} M=$(PWD) modules
+	make -C ${_BUILD} M=$(_PWD) modules
 
 clean:
-	make -C ${BUILD} M=$(PWD) clean
+	make -C ${_BUILD} M=$(_PWD) clean
 
 install:
-	cp hd44780.ko ${DEST}/drivers/misc/
+	cp ${_tgt}.ko ${DEST}/${_class}/
 	depmod -a
 
 uninstall:
-	rm -f ${DEST}/drivers/misc/hd44780.ko
+	rm -f ${DEST}/${_class}/${_tgt}.ko
 	depmod -a
 
 .PHONY: all clean install uninstall
-
+endif

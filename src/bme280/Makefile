@@ -4,20 +4,28 @@
 #
 # MIT License
 #
-uname_r := $(shell uname -r)
-_class  := drivers/iio/humidity
-_tgt    := bme280
 
+_tgt     := bme280
+
+_uname_r := $(shell uname -r)
+_BUILD   := /lib/modules/$(_uname_r)/build
+_PWD     := $(shell pwd)
+
+# If KERNELRELEASE is defined, we've been invoked from the
+# kernel build system and can use its language
+ifneq ($(KERNELRELEASE),)
 obj-m += ${_tgt}.o
 
-BUILD := /lib/modules/$(uname_r)/build
-DEST  := /lib/modules/$(uname_r)/kernel
+else
+_class  := drivers/iio/humidity
+
+DEST  := /lib/modules/$(_uname_r)/kernel
 
 all:
-	make -C ${BUILD} M=$(PWD) modules
+	make -C ${_BUILD} M=$(_PWD) modules
 
 clean:
-	make -C ${BUILD} M=$(PWD) clean
+	make -C ${_BUILD} M=$(_PWD) clean
 
 install:
 	cp ${_tgt}.ko ${DEST}/${_class}/
@@ -28,4 +36,4 @@ uninstall:
 	depmod -a
 
 .PHONY: all clean install uninstall
-
+endif
