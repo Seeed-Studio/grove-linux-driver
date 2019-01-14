@@ -15,3 +15,7 @@ uname_r=$(uname -r)
 apt-get update
 apt-get install linux-headers-$uname_r
 
+make
+make install
+
+
