@@ -14,6 +14,12 @@ _PWD     := $(shell pwd)
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language
 ifneq ($(KERNELRELEASE),)
+
+# signal_pending compability
+ifneq ($(wildcard $(_BUILD)/include/linux/sched/signal.h),)
+ccflags-y += -DSCHED_SIGNAL_H=1
+endif
+
 lis331dlh-i2c-objs := lis3lv02d.o lis3lv02d_i2c.o
 obj-m += ${_tgt}.o
 

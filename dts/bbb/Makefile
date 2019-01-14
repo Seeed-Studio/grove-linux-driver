@@ -36,7 +36,7 @@ all: ${DTBOS}
 
 PHONY += clean
 clean:
-	rm -f ${DTBOS} *.tmp
+	rm -f *.dtbo *.tmp
 
 PHONY += install
 install:
