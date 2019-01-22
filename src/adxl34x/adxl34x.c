@@ -4,6 +4,11 @@
  * Enter bugs at http://blackfin.uclinux.org/
  *
  * Copyright (C) 2009 Michael Hennerich, Analog Devices Inc.
+ *
+ * Copyright (c) 2019 Seeed Studio
+ * Peter Yang <turmary@126.com>
+ *   Add polling (no irq) support
+ *
  * Licensed under the GPL-2 or later.
  */
 
@@ -206,6 +211,10 @@ struct adxl34x {
 	unsigned model;
 	unsigned int_mask;
 
+	unsigned int_stat;
+	struct work_struct work_irq;
+	bool exit_work;
+
 	const struct adxl34x_bus_ops *bops;
 };
 
@@ -311,7 +320,11 @@ static irqreturn_t adxl34x_irq(int irq, void *handle)
 	else
 		tap_stat = 0;
 
-	int_stat = AC_READ(ac, INT_SOURCE);
+	if (!ac->irq) {
+		int_stat = ac->int_stat;
+	} else {
+		int_stat = AC_READ(ac, INT_SOURCE);
+	}
 
 	if (int_stat & FREE_FALL)
 		adxl34x_report_key_single(ac->input, pdata->ev_code_ff);
@@ -396,6 +409,39 @@ static irqreturn_t adxl34x_irq(int irq, void *handle)
 	input_sync(ac->input);
 
 	return IRQ_HANDLED;
+}
+
+/* in mHz */
+static unsigned bwrate_table[] = {
+	   100,     200,     390,     780,
+	  1560,    3130,    6250,   12500,
+	 25000,   50000,  100000,  200000,
+	400000,  800000, 1600000, 3200000,
+};
+
+/*
+ * work_cb_irq: scan adxl34x's interrupt.
+ */
+static void work_cb_irq(struct work_struct *work)
+{
+	struct adxl34x *ac = container_of(work, struct adxl34x, work_irq);
+
+	ac->int_stat = AC_READ(ac, INT_SOURCE);
+	if (ac->int_stat) {
+		adxl34x_irq(ac->irq, ac);
+	}
+	if (!ac->exit_work) {
+		unsigned msec;
+
+		msec = 1000000 / bwrate_table[ac->pdata.data_rate];
+		if (msec > 1)
+			--msec;
+		else if (!msec)
+			++msec;
+		msleep(msec);
+		schedule_work(&ac->work_irq);
+	}
+	return;
 }
 
 static void __adxl34x_disable(struct adxl34x *ac)
@@ -527,12 +573,32 @@ static ssize_t adxl34x_calibrate_store(struct device *dev,
 static DEVICE_ATTR(calibrate, 0664,
 		   adxl34x_calibrate_show, adxl34x_calibrate_store);
 
+static ssize_t adxl34x_available_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct adxl34x *ac = dev_get_drvdata(dev);
+	ssize_t count = 0;
+	int i;
+
+	mutex_lock(&ac->mutex);
+	for (i = 0; i < ARRAY_SIZE(bwrate_table); i++) {
+		count += sprintf(buf + count, "%u ", bwrate_table[i]);
+	}
+	sprintf(buf + count - 1, "\n");
+	mutex_unlock(&ac->mutex);
+
+	return count;
+}
+
+static DEVICE_ATTR(available_rates, S_IRUGO, adxl34x_available_show, NULL);
+
+
 static ssize_t adxl34x_rate_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
 	struct adxl34x *ac = dev_get_drvdata(dev);
 
-	return sprintf(buf, "%u\n", RATE(ac->pdata.data_rate));
+	return sprintf(buf, "%u mHz\n", bwrate_table[ac->pdata.data_rate]);
 }
 
 static ssize_t adxl34x_rate_store(struct device *dev,
@@ -540,12 +606,19 @@ static ssize_t adxl34x_rate_store(struct device *dev,
 				  const char *buf, size_t count)
 {
 	struct adxl34x *ac = dev_get_drvdata(dev);
-	unsigned char val;
-	int error;
+	unsigned val, rate;
+	int i, error;
 
-	error = kstrtou8(buf, 10, &val);
+	error = kstrtouint(buf, 10, &rate);
 	if (error)
 		return error;
+
+	for (i = 0; i < ARRAY_SIZE(bwrate_table) - 1; i++) {
+		if (bwrate_table[i] >= rate) {
+			break;
+		}
+	}
+	val = i;
 
 	mutex_lock(&ac->mutex);
 
@@ -645,6 +718,7 @@ static DEVICE_ATTR(write, 0664, NULL, adxl34x_write_store);
 static struct attribute *adxl34x_attributes[] = {
 	&dev_attr_disable.attr,
 	&dev_attr_calibrate.attr,
+	&dev_attr_available_rates.attr,
 	&dev_attr_rate.attr,
 	&dev_attr_autosleep.attr,
 	&dev_attr_position.attr,
@@ -699,9 +773,7 @@ struct adxl34x *adxl34x_probe(struct device *dev, int irq,
 	unsigned char revid;
 
 	if (!irq) {
-		dev_err(dev, "no IRQ?\n");
-		err = -ENODEV;
-		goto err_out;
+		dev_info(dev, "no irq, launch a thread to scan irq handler\n");
 	}
 
 	ac = kzalloc(sizeof(*ac), GFP_KERNEL);
@@ -810,12 +882,14 @@ struct adxl34x *adxl34x_probe(struct device *dev, int irq,
 
 	AC_WRITE(ac, POWER_CTL, 0);
 
-	err = request_threaded_irq(ac->irq, NULL, adxl34x_irq,
+	if (ac->irq) {
+		err = request_threaded_irq(ac->irq, NULL, adxl34x_irq,
 				   IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
 				   dev_name(dev), ac);
-	if (err) {
-		dev_err(dev, "irq %d busy?\n", ac->irq);
-		goto err_free_mem;
+		if (err) {
+			dev_err(dev, "irq %d busy?\n", ac->irq);
+			goto err_free_mem;
+		}
 	}
 
 	err = sysfs_create_group(&dev->kobj, &adxl34x_attr_group);
@@ -882,24 +956,37 @@ struct adxl34x *adxl34x_probe(struct device *dev, int irq,
 
 	ac->pdata.power_mode &= (PCTL_AUTO_SLEEP | PCTL_LINK);
 
+	if (!ac->irq) {
+		INIT_WORK(&ac->work_irq, work_cb_irq);
+		ac->exit_work = false;
+		schedule_work(&ac->work_irq);
+	}
+
 	return ac;
 
  err_remove_attr:
 	sysfs_remove_group(&dev->kobj, &adxl34x_attr_group);
  err_free_irq:
-	free_irq(ac->irq, ac);
+	if (ac->irq) {
+		free_irq(ac->irq, ac);
+	}
  err_free_mem:
 	input_free_device(input_dev);
 	kfree(ac);
- err_out:
 	return ERR_PTR(err);
 }
 EXPORT_SYMBOL_GPL(adxl34x_probe);
 
 int adxl34x_remove(struct adxl34x *ac)
 {
+	if (!ac->irq) {
+		ac->exit_work = true;
+		cancel_work_sync(&ac->work_irq);
+	}
 	sysfs_remove_group(&ac->dev->kobj, &adxl34x_attr_group);
-	free_irq(ac->irq, ac);
+	if (ac->irq) {
+		free_irq(ac->irq, ac);
+	}
 	input_unregister_device(ac->input);
 	dev_dbg(ac->dev, "unregistered accelerometer\n");
 	kfree(ac);
@@ -909,5 +996,6 @@ int adxl34x_remove(struct adxl34x *ac)
 EXPORT_SYMBOL_GPL(adxl34x_remove);
 
 MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
+MODULE_AUTHOR("Peter Yang <turmary@126.com>");
 MODULE_DESCRIPTION("ADXL345/346 Three-Axis Digital Accelerometer Driver");
 MODULE_LICENSE("GPL");
