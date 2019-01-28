@@ -32,10 +32,17 @@
 #define DEFAULT_TTY		"/dev/ttyS4"
 #define DEFAULT_LINE_LEN	152
 #define DEFAULT_LINES		152
+
 #define EINK_HDR		'a'
 #define EINK_HDR_RSP		'b'
+
+#define EINK_CHK_PROGRESS	0
+#define EINK_TAG_NEXT		"NEXT!"
+#define EINK_TAG_DONE		"DONE!"
+#define EINK_TAG_DBG		0
 #define EINK_TIMEOUT		3000 /* ms */
-#define EINK_LINE_DLY		70   /* ms */
+
+#define EINK_LINE_DLY		48   /* ms */
 
 #define EINK_POLL_WAIT		0
 
@@ -150,6 +157,25 @@ static int eink_tty_read(struct file *f, int timeout)
 	return rc;
 }
 
+static int eink_tty_block(struct file *f) {
+	mm_segment_t oldfs;
+	int fl;
+
+	oldfs = get_fs();
+
+	/* Set fd block */
+	fl = eink_tty_ioctl(f, F_GETFL, 0);
+	if (fl == -1) {
+		return fl;
+	}
+	fl &= ~O_NONBLOCK;
+
+	set_fs(KERNEL_DS);
+	eink_tty_ioctl(f, F_SETFL, (unsigned)fl);
+	set_fs(oldfs);
+	return 0;
+}
+
 static int eink_tty_setspeed(struct file *f, int speed)
 {
 	struct termios termios;
@@ -205,12 +231,62 @@ static int eink_tty_setspeed(struct file *f, int speed)
 	eink_tty_ioctl(f, TIOCSSERIAL, (unsigned long)&serial);
 
 	/* Clear input buffer */
-	eink_tty_ioctl(f, TCFLSH, (unsigned long)TCIOFLUSH);
+	eink_tty_ioctl(f, TCFLSH, TCIOFLUSH);
 
 	set_fs(oldfs);
 
 	return 0;
 }
+
+#if EINK_CHK_PROGRESS
+#define LINE_BUF_SZ	20
+#define TIMEOUT_MAX	100
+static int eink_check_progress(struct eink_dev *edev) {
+	static char buf[LINE_BUF_SZ];
+	static int index;
+	int rc;
+	int timeout;
+
+	memset(buf, '\0', sizeof buf);
+	for (timeout = TIMEOUT_MAX; timeout > 0; ) {
+		if ((rc = eink_tty_read(edev->tty, 1)) < 0) {
+			usleep_range(1000, 1000);
+			timeout--;
+			continue;
+		}
+
+		#if EINK_TAG_DBG
+		pr_info("R %c x%02X\n", rc, rc);
+		#endif
+
+		if (rc == '\r' || rc == '\n') {
+			if (!strcmp(buf, EINK_TAG_NEXT) ||
+			    !strcmp(buf, EINK_TAG_DONE)) {
+				#if EINK_TAG_DBG
+				pr_info("next or done\n");
+				#endif
+				break;
+			}
+			index = 0;
+			memset(buf, '\0', sizeof buf);
+		} else if (index < LINE_BUF_SZ - 1) {
+			buf[index++] = rc;
+			buf[index] = '\0';
+		}
+	}
+	if (timeout <= 0) {
+		return -ETIMEDOUT;
+	}
+
+	#if EINK_TAG_DBG
+	pr_info("timeout = %d\n", timeout);
+	#endif
+
+	/* Firmware bug: this time to wait burning flash data */
+	msleep(EINK_LINE_DLY + timeout - TIMEOUT_MAX);
+	return 0;
+}
+#endif
 
 static ssize_t eink_write(struct file *f, const char __user *buf,
 			     size_t len, loff_t *f_pos)
@@ -231,7 +307,11 @@ static ssize_t eink_write(struct file *f, const char __user *buf,
 		left -= rc;
 
 		/* e-ink slow wrtting */
+		#if EINK_CHK_PROGRESS
+		eink_check_progress(edev);
+		#else
 		msleep(EINK_LINE_DLY);
+		#endif
 	}
 	if (len != left) {
 		rc = len - left;
@@ -255,6 +335,9 @@ static int eink_send_header(struct file* tty) {
 			return -EBUSY;
 		}
 	}
+
+	/* it's blocked from now on */
+	eink_tty_block(tty);
 
 	if ((rc = eink_tty_write(tty, &header, sizeof header)) < 0) {
 		pr_info("write e-ink error = %d\n", rc);
