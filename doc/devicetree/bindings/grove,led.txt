@@ -1,0 +1,13 @@
+Grove GPIO Output device
+========================
+
+  All gpio level/edge output device could implement with gpio-leds.
+Refer Linux kernel document
+'Documentation/devicetree/bindings/leds/leds-gpio.txt'.
+
+Example:
+--------
+
+Refer device tree source:
+  dts/bbb/BB-GPIO-GROVE-LED.dts
+

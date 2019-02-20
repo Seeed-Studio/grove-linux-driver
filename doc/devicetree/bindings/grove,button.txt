@@ -1,0 +1,13 @@
+Grove GPIO Input device
+=======================
+
+  All gpio level/edge input device could implement with gpio-keys.
+Refer Linux kernel document
+'Documentation/devicetree/bindings/input/gpio-keys.txt'.
+
+Example:
+--------
+
+Refer device tree source:
+  dts/bbb/BB-GPIO-GROVE-BUTTON.dts
+

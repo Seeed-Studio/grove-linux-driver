@@ -81,6 +81,14 @@
 				pinctrl-names = "default";
 				pinctrl-0 = <>;
 				status = "okay";
+				/* default Grove - Triple Color E-Ink Display 1.54".
+				 * if it's Grove - Triple Color E-Ink Display 2.13",
+				 * uncomment below lines.
+				 */
+				#if 0
+				lines-len = <212>;
+				num-lines = <104>;
+				#endif
 			};
 		};
 	};
