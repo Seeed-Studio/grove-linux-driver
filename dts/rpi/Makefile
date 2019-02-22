@@ -4,10 +4,10 @@
 # MIT License
 #
 
-DTBOS := $(patsubst %.dts, %.dtbo, $(wildcard *.dts))
+DTBOS := $(patsubst %-overlay.dts, %.dtbo, $(wildcard *.dts))
 # $(warning DTBOS = $(DTBOS))
 
-DEST  := /lib/firmware
+DEST  := /boot/overlays
 SHELL := /bin/bash
 CPP   := gcc -E
 DTC   := dtc
@@ -27,7 +27,7 @@ define cmd_dtc
                 $(dtc-tmp) ;
 endef
 
-%.dtbo : %.dts
+%.dtbo : %-overlay.dts
 	$(call cmd_dtc)
 
 
@@ -46,8 +46,8 @@ install:
 	done
 	#
 	# What you need to do, for example:
-	#   enable LIS331DLH device in system configuration
-	# echo 'uboot_overlay_addr7=/lib/firmware/BB-I2C2-LIS331DLH.dtbo' >> /boot/uEnv.txt
+	#   enable Grove LED device connected GPIO 5 in system configuration
+	# echo 'dtoverlay=grove-led,led_gpio=5' >> /boot/config.txt
 	#
 
 PHONY += uninstall

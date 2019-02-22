@@ -8,6 +8,9 @@
 _dts_model := $(shell strings /proc/device-tree/model)
 _platform  := $(shell echo $(_dts_model) | sed -nr 's/TI AM335x.*/bbb/gp')
 # _platform  := $(patsubst TI AM335x%, bbb, $(_dts_model))
+ifeq (,${_platform})
+_platform  := $(shell echo $(_dts_model) | sed -nr 's/Raspberry Pi.*/rpi/gp')
+endif
 # $(warning platform = $(_platform))
 
 _DIRS      := $(wildcard src/*)
