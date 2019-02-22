@@ -5,9 +5,18 @@ Grove GPIO Input device
 Refer Linux kernel document
 'Documentation/devicetree/bindings/input/gpio-keys.txt'.
 
+
+RPi Overlay
+-----------
+Refer Overlay gpio-key of RPi overlay document
+'https://github.com/raspberrypi/linux/blob/rpi-4.14.y/arch/arm/boot/dts/overlays/README'
+
+
 Example:
 --------
 
 Refer device tree source:
   dts/bbb/BB-GPIO-GROVE-BUTTON.dts
+  https://github.com/raspberrypi/linux/blob/rpi-4.14.y/arch/arm/boot/dts/overlays/gpio-key-overlay.dts
+
 

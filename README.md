@@ -6,13 +6,15 @@ Grove Linux Driver
   - [BeagleBone Green](https://www.seeedstudio.com/Grove-Cape-for-BeagleBone-Series-p-1718.html)
   - [BeagleBone Green Wireless](https://www.seeedstudio.com/BeagleBone-Green-Wireless-Development-Board-TI-AM335x-WiFi-B-p-2650.html)
   - SeeedStudio BeagleBone Green Gateway Baseboard
+  - [Raspberry Pi](https://www.seeedstudio.com/category/Boards-c-17.html)
 
 
 
 <br><br>
 Installation
 ------------
-  Below steps will prepare all grove device tree blob object(.dtbo) to ```/lib/firmware/```,
+  Below steps will prepare all grove device tree blob object(.dtbo) to
+```/lib/firmware/``` on BB Series or ```/boot/overlays/``` on RPi,
 and grove device kernel module(.ko) to ```/lib/modules/<kernel version>/``` or it's sub-folder.
 
 1. Clone this repo
@@ -22,7 +24,7 @@ and grove device kernel module(.ko) to ```/lib/modules/<kernel version>/``` or i
    git clone https://github.com/Seeed-Studio/grove-linux-driver.git
    ```
 
-2. begin install
+2. Begin install
 
    ```bash
    cd ~/grove-linux-driver
@@ -33,9 +35,13 @@ and grove device kernel module(.ko) to ```/lib/modules/<kernel version>/``` or i
 <br><br>
 Usage
 -----
-After installation, the driver is prepared well, then
+After installation, the driver is prepared well, then we need to enable specific
+grove device in system configuration file.
 
-* Enable the specific grove device in [/boot/uEnv.txt](https://elinux.org/Beagleboard:BeagleBoneBlack_Debian#U-Boot_Overlays), that is append below line to /boot/uEnv.txt:
+#### BB Series
+
+* Append below line to the configuration file
+  [/boot/uEnv.txt](https://elinux.org/Beagleboard:BeagleBoneBlack_Debian#U-Boot_Overlays):
 
   ```bash
 
@@ -50,14 +56,40 @@ After installation, the driver is prepared well, then
 
   ```bash
   # If you plugin Grove LED to slot 1057 of Pocket Beagle Grove Cape, 
-  # and uboot_overlay_addr0 is unused, append below line:
+  # and uboot_overlay_addr0 is unused, append the line:
 
   uboot_overlay_addr0=/lib/firmware/lib/firmware/BB-GPIO-GROVE-LED.dtbo
 
   ```
 
-* For user application of specific device,
-   refer to [Grove Device Table](#grove-device-table).
+#### RPi Series
+
+* Append below line to the configuration file
+  [/boot/config.txt](https://github.com/raspberrypi/linux/blob/rpi-4.14.y/arch/arm/boot/dts/overlays/README)
+
+  ```bash
+  
+  dtoverlay=<Device-Tree-Blob-Name>,<param0>=<value0>,<param1>=<value1>,...
+  
+  ```
+  ```<Device-Tree-Blob-Name>```,```<paramN>```, ```<valueN>```:
+  refer to specific usage in [Grove Device Table](#grove-device-table)
+
+  ***example:***
+
+
+  ```bash
+  # If you connect Grove Button to pin 5 of Raspberry Pi,
+  # append the line:
+  
+  dtoverlay=gpio-key,gpio=5
+  
+  # the default keycode is KEY_POWER, so the pressing will result in a power off.
+  ```
+
+
+#### User interface
+* refer to ```Specific Usage``` of [Grove Device Table](#grove-device-table).
 
 
 
@@ -79,13 +111,19 @@ Grove Device Table
         <a href="https://www.seeedstudio.com/Grove-Purple-LED-3m-p-1143.html">Purple LED</a><br>
         <a href="https://www.seeedstudio.com/Grove-White-LED-p-1140.html">White LED</a>
       </td>
-      <td><a href="dts/bbb/BB-GPIO-GROVE-LED.dts">BB-GPIO-GROVE-LED</a></td>
+      <td>
+        BB : <a href="dts/bbb/BB-GPIO-GROVE-LED.dts">BB-GPIO-GROVE-LED</a><br>
+        RPi: <a href="dts/rpi/grove-led-overlay.dts">grove-led</a>
+      </td>
       <td>inner <a href="https://github.com/beagleboard/linux/blob/master/drivers/leds/leds-gpio.c">drivers/leds/leds-gpio.c</a></td>
       <td></td>
     </tr>
     <tr align="center">
       <td><a href="https://www.seeedstudio.com/s/Grove-Button-p-766.html">Button</a></td>
-      <td><a href="dts/bbb/BB-GPIO-GROVE-BUTTON.dts">BB-GPIO-GROVE-BUTTON</a></td>
+      <td>
+        BB : <a href="dts/bbb/BB-GPIO-GROVE-BUTTON.dts">BB-GPIO-GROVE-BUTTON</a><br>
+        RPi: <a href="https://github.com/raspberrypi/linux/blob/rpi-4.14.y/arch/arm/boot/dts/overlays/gpio-key-overlay.dts">gpio-key</a>
+      </td>
       <td>inner <a href="https://github.com/beagleboard/linux/blob/master/drivers/input/keyboard/gpio_keys.c">drivers/input/keyboard/gpio_keys.c</a></td>
       <td></td>
     </tr>
