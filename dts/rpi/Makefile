@@ -46,8 +46,8 @@ install:
 	done
 	#
 	# What you need to do, for example:
-	#   enable Grove LED device connected GPIO 5 in system configuration
-	# echo 'dtoverlay=grove-led,led_gpio=5' >> /boot/config.txt
+	#   enable Grove LED device connected GPIO 12 in system configuration
+	# echo 'dtoverlay=grove-led,led_gpio=12' >> /boot/config.txt
 	#
 
 PHONY += uninstall

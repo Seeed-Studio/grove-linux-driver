@@ -21,7 +21,7 @@
 			grove_led: grove_led@0 {
 				label = "grove:usr0";
 				linux,default-trigger = "default-on";
-				gpios = <&gpio 5 0>;
+				gpios = <&gpio 12 0>;
 			};
 		};
 	};

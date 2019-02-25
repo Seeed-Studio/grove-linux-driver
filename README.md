@@ -79,12 +79,11 @@ grove device in system configuration file.
 
 
   ```bash
-  # If you connect Grove Button to pin 5 of Raspberry Pi,
-  # append the line:
+  # If you connect Grove Button to gpio 5 of Raspberry Pi, append the line:
   
   dtoverlay=gpio-key,gpio=5
   
-  # the default keycode is KEY_POWER, so the pressing will result in a power off.
+  # The default keycode is KEY_POWER, so the pressing will result in a power off.
   ```
 
 
@@ -125,7 +124,7 @@ Grove Device Table
         RPi: <a href="https://github.com/raspberrypi/linux/blob/rpi-4.14.y/arch/arm/boot/dts/overlays/gpio-key-overlay.dts">gpio-key</a>
       </td>
       <td>inner <a href="https://github.com/beagleboard/linux/blob/master/drivers/input/keyboard/gpio_keys.c">drivers/input/keyboard/gpio_keys.c</a></td>
-      <td></td>
+      <td><a href="src/grove-button/README.md">Click</a></td>
     </tr>
     <tr align="center">
       <td><a href="https://www.seeedstudio.com/Grove-Ultrasonic-Ranger-p-960.html">Ultrasonic Ranger</a></td>
