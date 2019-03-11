@@ -18,6 +18,6 @@
         Object Distance = 37 mm
         Object Distance = 38 mm
         Object Distance = 45 mm
-  User can test the sensor with move it.
+  User can test the sensor with moving it.
 
 ***
