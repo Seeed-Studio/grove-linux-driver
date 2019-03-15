@@ -130,19 +130,19 @@ Grove Device Table
       <td><a href="https://www.seeedstudio.com/Grove-Ultrasonic-Ranger-p-960.html">Ultrasonic Ranger</a></td>
       <td><a href="dts/bbb/BB-GPIO-HCSR04.dts">BB-GPIO-HCSR04</a></td>
       <td><a href="src/hcsr04/hcsr04.c">src/hcsr04/hcsr04.c</a></td>
-      <td></td>
+      <td><a href="src/hcsr04/README.md">Click</a></td>
     </tr>
     <tr align="center">
-      <td><a href="https://www.seeedstudio.com/Grove-Temp-Humi-Barometer-Sensor-BME28-p-2653.html">Temp&Humi&Barometer Sensor (BME280)</a></td>
+      <td><a href="https://www.seeedstudio.com/Grove-Temp-Humi-Barometer-Sensor-BME280-p-2653.html">Temp&Humi&Barometer Sensor (BME280)</a></td>
       <td><a href="dts/bbb/BB-I2C1-BME280.dts">BB-I2C1-BME280</a></td>
       <td>inner <a href="https://github.com/beagleboard/linux/blob/master/drivers/iio/pressure/bmp280-i2c.c">drivers/iio/pressure/bmp280-i2c.c</a></td>
-      <td></td>
+      <td><a href="src/bme280/README.md">Click</a></td>
     </tr>
     <tr align="center">
       <td>
-        <a href="https://www.seeedstudio.com/Grove-16-x-2-LCD-Black-on-Re-p-3197.html">16 x 2 LCD (Black on Red)</a><br>
-        <a href="https://www.seeedstudio.com/Grove-16-x-2-LCD-Black-on-Yello-p-3198.html">16 x 2 LCD (Black on Yellow)</a><br>
-        <a href="https://www.seeedstudio.com/Grove-16-x-2-LCD-White-on-Blu-p-3196.html">16 x 2 LCD (White on Blue)</a>
+        <a href="https://www.seeedstudio.com/Grove-16-x-2-LCD-Black-on-Red-p-3197.html">16 x 2 LCD (Black on Red)</a><br>
+        <a href="https://www.seeedstudio.com/Grove-16-x-2-LCD-Black-on-Yellow-p-3198.html">16 x 2 LCD (Black on Yellow)</a><br>
+        <a href="https://www.seeedstudio.com/Grove-16-x-2-LCD-White-on-Blue-p-3196.html">16 x 2 LCD (White on Blue)</a>
       </td>
       <td><a href="dts/bbb/BB-I2C1-JHD1802.dts">BB-I2C1-JHD1802</a></td>
       <td><a href="src/hd44780/hd44780-i2c.c">src/hd44780/hd44780-i2c.c</a></td>
@@ -152,16 +152,16 @@ Grove Device Table
       <td><a href="https://www.seeedstudio.com/Grove-3-Axis-Digital-Accelerometer-16-p-1156.html">3-Axis Digital Accelerometer (±16g)</a></td>
       <td><a href="dts/bbb/BB-I2C2-ADXL34X.dts">BB-I2C2-ADXL34X</a></td>
       <td><a href="src/adxl34x/adxl34x-i2c.c">src/adxl34x/adxl34x-i2c.c</a></td>
-      <td></td>
+      <td><a href="src/adxl34x/README.md">Click</a></td>
     </tr>
     <tr align="center">
       <td><a href="https://www.seeedstudio.com/Grove-3-Axis-Digital-Accelerometer-400-p-1897.html">3-Axis Digital Accelerometer (±400g)</a></td>
       <td><a href="dts/bbb/BB-I2C2-LIS331DLH.dts">BB-I2C2-LIS331DLH</a></td>
       <td>inner <a href="https://github.com/beagleboard/linux/blob/master/drivers/iio/accel/st_accel_i2c.c">drivers/iio/accel/st_accel_i2c.c</a></td>
-      <td></td>
+      <td><a href="src/lis3lv02d/README.md">Click</a></td>
     </tr>
     <tr align="center">
-      <td><a href="https://www.seeedstudio.com/Grove-Temperature-Humidity-Sensor-SHT3-p-2655.html">Temperature & Humidity Sensor (SHT31)</a></td>
+      <td><a href="https://www.seeedstudio.com/Grove-Temperature-Humidity-Sensor-SHT31-p-2655.html">Temperature & Humidity Sensor (SHT31)</a></td>
       <td><a href="dts/bbb/BB-I2C2-SHT3X.dts">BB-I2C2-SHT3X</a></td>
       <td><a href="src/sht3x/sht3x.c">src/sht3x/sht3x.c</a></td>
       <td><a href="src/sht3x/README.md">Click</a></td>
