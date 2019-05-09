@@ -58,7 +58,7 @@ grove device in system configuration file.
   # If you plugin Grove LED to slot 1057 of Pocket Beagle Grove Cape, 
   # and uboot_overlay_addr0 is unused, append the line:
 
-  uboot_overlay_addr0=/lib/firmware/lib/firmware/BB-GPIO-GROVE-LED.dtbo
+  uboot_overlay_addr0=/lib/firmware/BB-GPIO-GROVE-LED.dtbo
 
   ```
 
@@ -180,6 +180,15 @@ Grove Device Table
       <td><a href="dts/bbb/BB-UART4-E-INK.dts">BB-UART4-E-INK</a></td>
       <td><a href="src/e-ink/eink-tty.c">src/e-ink/eink-tty.c</a></td>
       <td></td>
+    </tr>
+    <tr align="center">
+      <td>
+        <a href="https://www.seeedstudio.com/Grove-Chainable-RGB-LED-p-850.html">Chainable RGB LED</a><br>
+        <a href="https://www.seeedstudio.com/Grove-Chainable-RGB-Led-V2-0.html">Chainable RGB Led V2.0</a><br>
+      </td>
+      <td><a href="dts/bbb/BB-GPIO-P9813.dts">BB-GPIO-P9813</a></td>
+      <td><a href="src/p9813/p9813.c">src/p9813/p9813.c</a></td>
+      <td><a href="src/p9813/README.md">Click</a></td>
     </tr>
   </table>
 </div>
