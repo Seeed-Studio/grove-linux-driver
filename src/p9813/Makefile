@@ -5,8 +5,7 @@
 # MIT License
 #
 
-# no irq version
-_tgt     := eink-tty
+_tgt     := p9813
 
 _uname_r := $(shell uname -r)
 _BUILD   := /lib/modules/$(_uname_r)/build

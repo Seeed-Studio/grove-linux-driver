@@ -1,10 +1,10 @@
 /*
- * Triple Color E-Ink Display Driver
+ * Chainable RGB LED (P9813) Driver
  *
  * Copyright (C) 2019 Seeed Studio
  * Peter Yang <turmary@126.com>
  *
- * Released under the GPL
+ * Released under the GPLv2
  *
  */
 
@@ -17,511 +17,348 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/mutex.h>
-#include <linux/of.h>
 #include <linux/slab.h>
-#include <linux/platform_device.h>
-#include <linux/miscdevice.h>
-#include <linux/termios.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
-#include <asm/ioctls.h>
-#include <linux/serial.h>
 #include <linux/poll.h>
+#include <linux/platform_device.h>
+#include <linux/miscdevice.h>
+#include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/of_device.h>
 
-#define DEFAULT_BAUDRATE	230400
-#define DEFAULT_TTY		"/dev/ttyS4"
-#define DEFAULT_LINE_LEN	152
-#define DEFAULT_LINES		152
+#define DEV_NAME "p981x"
 
-#define EINK_HDR		'a'
-#define EINK_HDR_RSP		'b'
+/* FCLK <= 15MHz */
+#define P981X_PULSE_DLY		50    /* ns */
 
-#define EINK_CHK_PROGRESS	0
-#define EINK_TAG_NEXT		"NEXT!"
-#define EINK_TAG_DONE		"DONE!"
-#define EINK_TAG_DBG		0
-#define EINK_TIMEOUT		3000 /* ms */
-
-#define EINK_LINE_DLY		48   /* ms */
-
-#define EINK_POLL_WAIT		0
+#define P981X_LINE_LEN		64   /* chars */
 
 /*
- * This driver creates a character device (/dev/eink) which exposes the
- * Triple Color E-ink Display
+ * This driver creates a character device (/dev/p981xN) which exposes the
+ * Chainable RGB LED (P9813)
  */
 
-struct eink_dev {
+struct p981x_dev {
 	/* misc device descriptor */
 	struct miscdevice miscdev;
 
-	/* port (/dev/ttyS1 eg.) & speed (115200 eg.)*/
-	const char* tty_port;
-	u32	baudrate;
+	/* pins */
+	int     pin_clk;
+	int     pin_data;
 
 	/* locks */
 	struct mutex mutex;
 
-	/* screen x-res & y-res */
-	u32	line_len, num_lines;
-	u32	size;
+	/* LEDs count */
+	int	count;
+	/* LEDs data buffer */
+	u32*    buffer;
 
-	/* tty port info */
-	struct file* tty;
-
-	/* bytes left to written of one display data image */
-	int bytes_left;
+	/* command line index */
+	int     index;
+	/* command line data */
+	char    line[P981X_LINE_LEN + 1];
 };
-#define to_eink_dev(dev)  container_of((dev), struct eink_dev, miscdev)
+#define to_p981x_dev(dev)  container_of((dev), struct p981x_dev, miscdev)
 static int dev_index = 0;
 
-static long eink_tty_ioctl(struct file *f, unsigned int op,
-				 unsigned long param)
-{
-	if (f->f_op->unlocked_ioctl)
-		return f->f_op->unlocked_ioctl(f, op, param);
 
-	return -ENOTTY;
-}
+static int p981x_send_byte(struct p981x_dev *ppd, u8 b) {
+	int i;
 
-static int eink_tty_write(struct file *f, unsigned char *buf, int count)
-{
-	loff_t pos = 0;
-	return kernel_write(f, buf, count, &pos);
-}
+	for (i = 0; i < 8; i++) {
+		/* DATA LEVEL */
+		gpio_set_value(ppd->pin_data, !!(b & 0x80UL));
 
-#if EINK_POLL_WAIT
-static void eink_tty_read_poll_wait(struct file *f, int timeout)
-{
-	struct poll_wqueues table;
-	ktime_t start, now;
-
-	start = ktime_get();
-	poll_initwait(&table);
-	while (1) {
-		long elapsed;
-		int mask;
-
-		mask = f->f_op->poll(f, &table.pt);
-		if (mask & (POLLRDNORM | POLLRDBAND | POLLIN |
-			    POLLHUP | POLLERR)) {
-			break;
-		}
-		now = ktime_get();
-		elapsed = ktime_us_delta(now, start);
-		if (elapsed > timeout)
-			break;
-		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(((timeout - elapsed) * HZ) / 10000);
+		/* ONE PULSE CLOCK */
+		gpio_set_value(ppd->pin_clk, 0);
+		ndelay(P981X_PULSE_DLY);
+		gpio_set_value(ppd->pin_clk, 1);
+		ndelay(P981X_PULSE_DLY);
+		b <<= 1;
 	}
-	poll_freewait(&table);
-}
-#endif
-
-static int eink_tty_read(struct file *f, int timeout)
-{
-	unsigned char ch;
-	int rc;
-	loff_t pos = 0;
-
-	rc = -ETIMEDOUT;
-	if (IS_ERR(f)) {
-		return -EINVAL;
-	}
-
-	#if EINK_POLL_WAIT
-	if (f->f_op->poll) {
-		eink_tty_read_poll_wait(f, timeout);
-
-		if (kernel_read(f, &ch, 1, &pos) == 1)
-			rc = ch;
-	}
-	else
-	#endif
-	{
-		/* Device does not support poll, busy wait */
-		int retries = 0;
-
-		while (1) {
-			if (kernel_read(f, &ch, 1, &pos) == 1) {
-				rc = ch;
-				break;
-			}
-
-			if (++retries > timeout) {
-				break;
-			}
-			usleep_range(800, 1200);
-		}
-	}
-	return rc;
-}
-
-static int eink_tty_block(struct file *f) {
-	mm_segment_t oldfs;
-	int fl;
-
-	oldfs = get_fs();
-
-	/* Set fd block */
-	fl = eink_tty_ioctl(f, F_GETFL, 0);
-	if (fl == -1) {
-		return fl;
-	}
-	fl &= ~O_NONBLOCK;
-
-	set_fs(KERNEL_DS);
-	eink_tty_ioctl(f, F_SETFL, (unsigned)fl);
-	set_fs(oldfs);
 	return 0;
 }
 
-static int eink_tty_setspeed(struct file *f, int speed)
-{
-	struct termios termios;
-	struct serial_struct serial;
-	mm_segment_t oldfs;
+static int p981x_send_u32(struct p981x_dev *ppd, u32 word) {
+	int i;
 
-	oldfs = get_fs();
-	set_fs(KERNEL_DS);
-
-	/* Set speed */
-	eink_tty_ioctl(f, TCGETS, (unsigned long)&termios);
-	termios.c_iflag = 0;
-	termios.c_oflag = 0;
-	termios.c_lflag = 0;
-	termios.c_cflag = CLOCAL | CS8 | CREAD;
-	termios.c_cc[VMIN] = 1;
-	termios.c_cc[VTIME] = 0;
-
-	switch (speed) {
-	case 2400:
-		termios.c_cflag |= B2400;
-		break;
-	case 4800:
-		termios.c_cflag |= B4800;
-		break;
-	case 9600:
-		termios.c_cflag |= B9600;
-		break;
-	case 19200:
-		termios.c_cflag |= B19200;
-		break;
-	case 38400:
-		termios.c_cflag |= B38400;
-		break;
-	case 57600:
-		termios.c_cflag |= B57600;
-		break;
-	case 115200:
-		termios.c_cflag |= B115200;
-		break;
-	case 230400:
-		termios.c_cflag |= B230400;
-		break;
-	default:
-		termios.c_cflag |= B9600;
-		break;
+	for (i = 3; i >= 0; i--) {
+		p981x_send_byte(ppd, ((u8*)&word)[i]);
 	}
-	eink_tty_ioctl(f, TCSETS, (unsigned long)&termios);
-
-	/* Set low latency */
-	eink_tty_ioctl(f, TIOCGSERIAL, (unsigned long)&serial);
-	serial.flags |= ASYNC_LOW_LATENCY;
-	eink_tty_ioctl(f, TIOCSSERIAL, (unsigned long)&serial);
-
-	/* Clear input buffer */
-	eink_tty_ioctl(f, TCFLSH, TCIOFLUSH);
-
-	set_fs(oldfs);
-
 	return 0;
 }
 
-#if EINK_CHK_PROGRESS
-#define LINE_BUF_SZ	20
-#define TIMEOUT_MAX	100
-static int eink_check_progress(struct eink_dev *edev) {
-	static char buf[LINE_BUF_SZ];
-	static int index;
-	int rc;
-	int timeout;
+static int p981x_send_frame(struct p981x_dev *ppd) {
+	int i;
 
-	memset(buf, '\0', sizeof buf);
-	for (timeout = TIMEOUT_MAX; timeout > 0; ) {
-		if ((rc = eink_tty_read(edev->tty, 1)) < 0) {
-			usleep_range(1000, 1000);
-			timeout--;
-			continue;
+	/* Send data frame prefix (32x "0") */
+	p981x_send_u32(ppd, 0x0UL);
+
+	/* Send color data for each one of the leds */
+	for (i = 0; i < ppd->count && ppd->buffer; i++) {
+		p981x_send_u32(ppd, ppd->buffer[i]);
+	}
+
+	/* Terminate data frame (32x "0") */
+	p981x_send_u32(ppd, 0x0UL);
+	return 0;
+}
+
+static u32 p981x_color(u8 red, u8 green, u8 blue) {
+	u32 color;
+
+	color  = 0xC0000000UL;
+	color |= (~blue  & 0xC0UL) << 22;
+	color |= (~green & 0xC0UL) << 20;
+	color |= (~red   & 0xC0UL) << 18;
+	color |= blue  << 16;
+	color |= green << 8;
+	color |= red   << 0;
+	return color;
+}
+
+static int p981x_cmds(struct p981x_dev *ppd) {
+	char* endp;
+	char* cp;
+	int i, rc;
+	#define COLOR_CNT	4
+	int color[COLOR_CNT];
+
+	switch (ppd->line[0]) {
+	case 'N':
+		rc = sscanf(&ppd->line[1], "%d", &ppd->count);
+		if (ppd->buffer) {
+			kfree(ppd->buffer);
+			ppd->buffer = NULL;
 		}
+		if (ppd->count > 0) {
+			ppd->buffer = kmalloc(sizeof(u32) * ppd->count, GFP_KERNEL);
+		}
+		break;
 
-		#if EINK_TAG_DBG
-		pr_info("R %c x%02X\n", rc, rc);
-		#endif
+	case 'D':
+		endp = &ppd->line[1];
+		for (i = 0; i < COLOR_CNT && (cp = strsep(&endp, " \t")) != NULL; ) {
+			long long ll;
 
-		if (rc == '\r' || rc == '\n') {
-			if (!strcmp(buf, EINK_TAG_NEXT) ||
-			    !strcmp(buf, EINK_TAG_DONE)) {
-				#if EINK_TAG_DBG
-				pr_info("next or done\n");
-				#endif
+			/* format: led-index red green blue */
+			if (! *cp) {
+				continue;
+			}
+			rc = kstrtoll(cp, 0, &ll);
+			if (rc < 0) {
 				break;
 			}
-			index = 0;
-			memset(buf, '\0', sizeof buf);
-		} else if (index < LINE_BUF_SZ - 1) {
-			buf[index++] = rc;
-			buf[index] = '\0';
+			color[i++] = ll;
+
+			pr_debug("color%d = 0x%02X (%d)\n", i - 1, (u8)ll, (u8)ll);
 		}
-	}
-	if (timeout <= 0) {
-		return -ETIMEDOUT;
+		if (i >= COLOR_CNT) {
+			rc = color[0];
+			if (0 <= rc && rc < ppd->count && ppd->buffer) {
+				ppd->buffer[rc] =
+					p981x_color(color[1], color[2], color[3]);
+			}
+		}
+		break;
 	}
 
-	#if EINK_TAG_DBG
-	pr_info("timeout = %d\n", timeout);
-	#endif
-
-	/* Firmware bug: this time to wait burning flash data */
-	msleep(EINK_LINE_DLY + timeout - TIMEOUT_MAX);
+	ppd->index = 0;
 	return 0;
 }
-#endif
 
-static ssize_t eink_write(struct file *f, const char __user *buf,
+static ssize_t p981x_write(struct file *f, const char __user *buf,
 			     size_t len, loff_t *f_pos)
 {
-	struct eink_dev *edev = to_eink_dev(f->private_data);
-	/* 4 lines each time */
-	int each_max = edev->line_len / 8 * 4;
-	int rc = 0;
-	int left;
+	struct p981x_dev *ppd = to_p981x_dev(f->private_data);
+	size_t i;
+	char ch;
 
-	for (left = len; left > 0; ) {
-		int line = min(left, each_max);
+	for (i = 0; i < len; i++) {
+		if (copy_from_user(&ch, buf + i, 1)) {
+			return -EFAULT;
+		}
 
-		if ((rc = eink_tty_write(edev->tty, (u8*)buf, line)) < 0) {
+		switch (ch) {
+		case '\r':
+		case '\n':
+		case '\0':
+			ch = '\0';
+			break;
+		default:
 			break;
 		}
-		buf += rc;
-		left -= rc;
-
-		/* e-ink slow wrtting */
-		#if EINK_CHK_PROGRESS
-		eink_check_progress(edev);
-		#else
-		msleep(EINK_LINE_DLY);
-		#endif
-	}
-	if (len != left) {
-		rc = len - left;
-		edev->bytes_left -= rc;
-	}
-	return rc;
-}
-
-/*
- * header & response protocol
- */
-static int eink_send_header(struct file* tty) {
-	int rc, timeout;
-	u8 header = EINK_HDR;
-
-	/* clear receiving buffer, in 1 seconds */
-	timeout = 100;
-	while ((rc = eink_tty_read(tty, 10)) >= 0) {
-		pr_info("recv: 0x%02X\n", rc);
-		if (timeout-- <= 0) {
-			return -EBUSY;
+		if ( ! ppd->index && (ch == ' ' || ch == '\t')) {
+			/* skip prefix space */
+			continue;
+		}
+		ppd->line[ppd->index++] = ch;
+		if (ppd->index >= P981X_LINE_LEN || !ch) {
+			p981x_cmds(ppd);
 		}
 	}
 
-	/* it's blocked from now on */
-	eink_tty_block(tty);
+	/* Update display */
+	p981x_send_frame(ppd);
 
-	if ((rc = eink_tty_write(tty, &header, sizeof header)) < 0) {
-		pr_info("write e-ink error = %d\n", rc);
-		return -EINVAL;
-	}
-
-	if ((rc = eink_tty_read(tty, EINK_TIMEOUT)) < 0) {
-		pr_info("read e-ink error = %d\n", rc);
-		return rc;
-	}
-
-	if (rc != EINK_HDR_RSP) {
-		pr_info("invalid response = 0x%02x\n", rc);
-		return -ENODEV;
-	}
-
-	return 0;
+	return len;
 }
 
-static int eink_open(struct inode *inode, struct file *f)
+static int p981x_open(struct inode *inode, struct file *f)
 {
-	struct eink_dev *edev = to_eink_dev(f->private_data);
-	struct device* dev = edev->miscdev.this_device;
-	int rc = 0;
+	struct p981x_dev *ppd = to_p981x_dev(f->private_data);
+	/* struct device* dev = ppd->miscdev.this_device; */
 
-	if (!mutex_trylock(&edev->mutex)) {
+	if (!mutex_trylock(&ppd->mutex)) {
 		pr_debug("Device Busy\n");
 		return -EBUSY;
 	}
-
-	edev->tty = filp_open(edev->tty_port, O_RDWR | O_NONBLOCK, 0);
-	if (IS_ERR(edev->tty)) {
-		rc = (int)PTR_ERR(edev->tty);
-		dev_err(dev, "file %s open error = %d\n", edev->tty_port, rc);
-		goto fail;
-	}
-
-	/* Set configuration to the tty port */
-	rc = eink_tty_setspeed(edev->tty, edev->baudrate);
-	if (rc) {
-		goto fail;
-	}
-
-	/* header to probe e-ink hardware */
-	rc = eink_send_header(edev->tty);
-	if (rc) {
-		goto fail;
-	}
-
-	edev->bytes_left = edev->size;
 	return 0;
-
-fail:
-	mutex_unlock(&edev->mutex);
-	return rc;
 }
 
-static int eink_release(struct inode *inode, struct file *f)
+static int p981x_release(struct inode *inode, struct file *f)
 {
-	struct eink_dev *edev = to_eink_dev(f->private_data);
-	mutex_unlock(&edev->mutex);
+	struct p981x_dev *ppd = to_p981x_dev(f->private_data);
 
-	filp_close(edev->tty, NULL);
-
-	if (edev->bytes_left > 0) {
-		pr_info("incomplete e-ink display data be written\n");
-		return -EINVAL;
-	}
+	mutex_unlock(&ppd->mutex);
 	return 0;
 }
 
-static const struct file_operations eink_fops = {
+static const struct file_operations p981x_fops = {
 	.owner		= THIS_MODULE,
-	.write		= eink_write,
-	.open		= eink_open,
-	.release	= eink_release
+	.write		= p981x_write,
+	.open		= p981x_open,
+	.release	= p981x_release
 };
 
 static const struct miscdevice misc_def = {
 	.minor		= MISC_DYNAMIC_MINOR,
-	.name		= "eink",
+	.name		= DEV_NAME,
 	.mode		= S_IWUGO,
-	.fops		= &eink_fops
+	.fops		= &p981x_fops
 };
 
-static int eink_probe(struct platform_device *pdev)
+/* Initialise GPIO */
+static int p981x_gpio_init(int gpio)
+{
+	/* check that GPIO is valid */
+	if ( !gpio_is_valid(gpio) ){
+		pr_err("GPIO %d is not valid\n", gpio );
+		return -EINVAL;
+	}
+
+	/* request the GPIO pin */
+	if ( gpio_request(gpio, DEV_NAME) != 0 ) {
+		pr_err("Unable to request GPIO %d\n", gpio );
+		return -EINVAL;
+	}
+
+	/* make GPIO an output */
+	if ( gpio_direction_output(gpio, 0) != 0 ) {
+		pr_err("Failed to make GPIO %d as output\n", gpio );
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int p981x_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct device *dev;
-	struct eink_dev *edev;
+	struct p981x_dev *ppd;
 	int rc;
 
 	/* Allocate memory for our private structure */
-	edev = kzalloc(sizeof(*edev), GFP_KERNEL);
-	if (!edev) {
+	ppd = kzalloc(sizeof(*ppd), GFP_KERNEL);
+	if (!ppd) {
 		return -ENOMEM;
 	}
 
-	rc = of_property_read_string(np, "tty-port", &edev->tty_port);
-	if (rc) {
-		edev->tty_port = DEFAULT_TTY;
-		pr_err("tty-port property not found, use default %s\n",
-			edev->tty_port);
+	if (np) {
+		/*
+		 * first  gpio: clock pin
+		 * second gpio: data  pin
+		 */
+		ppd->pin_clk  = of_get_gpio(np, 0);
+		ppd->pin_data = of_get_gpio(np, 1);
+	} else {
+		ppd->pin_clk = ppd->pin_data = -1;
 	}
 
-	rc = of_property_read_u32(np, "baudrate", &edev->baudrate);
-	if (rc) {
-		edev->baudrate = DEFAULT_BAUDRATE;
-		pr_err("baudrate property not found, use default %u\n",
-			edev->baudrate);
+	if (ppd->pin_clk < 0 || ppd->pin_data < 0) {
+		pr_err("Failed to get clock & data gpio in device tree\n");
+		rc = -EINVAL;
+		goto free_p981x;
+	}
+	if (p981x_gpio_init(ppd->pin_clk) || p981x_gpio_init(ppd->pin_data)) {
+		rc = -EINVAL;
+		goto free_p981x;
 	}
 
-	rc = of_property_read_u32(np, "lines-len", &edev->line_len);
-	if (rc) {
-		edev->line_len = DEFAULT_LINE_LEN;
-		pr_err("lines-len property not found, use default %u\n",
-			edev->line_len);
-	}
+	mutex_init(&ppd->mutex);
 
-	rc = of_property_read_u32(np, "num-lines", &edev->num_lines);
-	if (rc) {
-		edev->num_lines = DEFAULT_LINES;
-		pr_err("num-lines property not found, use default %u\n",
-			edev->num_lines);
-	}
-
-	mutex_init(&edev->mutex);
-
-	/* 1 pixel occupy 2 bits */
-	edev->size = edev->line_len * edev->num_lines / 4;
-
-	pr_devel("E-ink of size %u bytes found with %u lines of length %u\n",
-		edev->size, edev->num_lines, edev->line_len);
-
-	edev->miscdev = misc_def;
-	edev->miscdev.name = kasprintf(GFP_KERNEL, "%s%d",
+	ppd->miscdev = misc_def;
+	ppd->miscdev.name = kasprintf(GFP_KERNEL, "%s%d",
 				misc_def.name, dev_index++);
-	rc = misc_register(&edev->miscdev);
+	rc = misc_register(&ppd->miscdev);
 	if (rc) {
-		pr_err("Failed to register as misc device\n");
-		goto free_eink;
+		pr_err("Failed to register as misc device %s\n", misc_def.name);
+		goto free_p981x;
 	}
 
 	/* platform device drvdata */
-	dev_set_drvdata(&pdev->dev, edev);
+	dev_set_drvdata(&pdev->dev, ppd);
 
 	/* misc device drvdata */
-	dev = edev->miscdev.this_device;
-	dev_set_drvdata(dev, edev);
+	dev = ppd->miscdev.this_device;
+	dev_set_drvdata(dev, ppd);
 
+	pr_info("device %s registered, using clock:%d data:%d\n",
+		ppd->miscdev.name, ppd->pin_clk, ppd->pin_data);
 	return 0;
 
-free_eink:
-	kfree(edev);
+free_p981x:
+	kfree(ppd);
 	return rc;
 }
 
-static int eink_remove(struct platform_device *pdev)
+static int p981x_remove(struct platform_device *pdev)
 {
-	struct eink_dev *edev = platform_get_drvdata(pdev);
-	
-	misc_deregister(&edev->miscdev);
-	kfree(edev->miscdev.name);
-	kfree(edev);
+	struct p981x_dev *ppd = platform_get_drvdata(pdev);
+
+	gpio_free(ppd->pin_clk);
+	gpio_free(ppd->pin_data);
+
+	if (ppd->buffer) {
+		kfree(ppd->buffer);
+		ppd->buffer = NULL;
+	}
+
+	misc_deregister(&ppd->miscdev);
+	kfree(ppd->miscdev.name);
+	kfree(ppd);
 	return 0;
 }
 
-static const struct of_device_id eink_match[] = {
-	{ .compatible = "seeed,eink" },
+static const struct of_device_id p981x_match[] = {
+	{ .compatible = "dms," DEV_NAME },
 	{ },
 };
 
-static struct platform_driver eink_driver = {
+static struct platform_driver p981x_driver = {
 	.driver	= {
-		.name		= "eink",
-		.of_match_table	= eink_match,
+		.name		= DEV_NAME,
+		.of_match_table	= p981x_match,
 	},
-	.probe	= eink_probe,
-	.remove	= eink_remove,
+	.probe	= p981x_probe,
+	.remove	= p981x_remove,
 };
 
-module_platform_driver(eink_driver);
+module_platform_driver(p981x_driver);
 
-MODULE_DEVICE_TABLE(of, eink_match);
+MODULE_DEVICE_TABLE(of, p981x_match);
 MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("Triple Color E-Ink Display Driver");
+MODULE_DESCRIPTION("Chainable RGB LED (P9813) Driver");
 MODULE_AUTHOR("Peter Yang <turmary@126.com>");
